@@ -1235,6 +1235,42 @@ impl BusRef {
         Ok(())
     }
 
+    #[inline]
+    pub fn add_match<F>(&self, path: &ObjectPath, callback: F) -> super::Result<()>
+    where
+        F: Fn(&mut MessageRef) -> Result<()> + Send + Sync + 'static,
+    {
+        let f: extern "C" fn(
+            *mut ffi::bus::sd_bus_message,
+            *mut c_void,
+            *mut ffi::bus::sd_bus_error,
+        ) -> c_int = raw_message_handler::<F>;
+        let d: extern "C" fn(*mut c_void) = raw_destroy_cb_message_handler::<F>;
+        let mut slot = ptr::null_mut();
+        let b = Box::into_raw(Box::new(callback));
+        match crate::ffi_result(unsafe {
+            ffi::bus::sd_bus_add_match(
+                self.as_ptr(),
+                &mut slot,
+                &*path as *const _ as *const _,
+                Some(f),
+                b as *mut c_void,
+            )
+        }) {
+            Err(e) => {
+                unsafe { Box::from_raw(b) };
+                Err(e)
+            }
+            Ok(_) => {
+                unsafe {
+                    ffi::bus::sd_bus_slot_set_destroy_callback(slot, Some(d));
+                    ffi::bus::sd_bus_slot_set_floating(slot, 1);
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// This corresponds to [`sd_bus_add_object`]
     ///
     /// [`sd_bus_add_object`]: https://www.freedesktop.org/software/systemd/man/sd_bus_add_object.html
